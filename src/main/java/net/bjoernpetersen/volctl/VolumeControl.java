@@ -166,9 +166,75 @@ public class VolumeControl {
         setVolumeNative(value);
     }
 
+    /**
+     * Checks if the audio is currently muted.
+     *
+     * @return true if the audio is muted, false otherwise
+     */
+    public boolean getMute() {
+        return getMuteNative();
+    }
+
+    /**
+     * Sets the mute state of the audio.
+     *
+     * @param value true to mute the audio, false to unmute
+     */
+    public void setMute(boolean value) {
+        setMuteNative(value);
+    }
+
+    /**
+     * Toggles the mute state of the audio.
+     * If the audio is currently muted, it will be unmuted.
+     * If the audio is currently unmuted, it will be muted.
+     */
+    public void toggleMute() {
+        toggleMuteNative();
+    }
+
+    /**
+     * Increases the current master audio volume level.
+     * The volume level will be increased by a predefined increment,
+     * ensuring it does not exceed the maximum value of 100.
+     */
+    public void volumeUp() {
+        volumeUpNative();
+    }
+
+    /**
+     * Decreases the current master audio volume level.
+     * The volume level will be decreased by a predefined decrement,
+     * ensuring it does not fall below the minimum value of 0.
+     */
+    public void volumeDown() {
+        volumeDownNative();
+    }
+
+    /**
+     * Gets the current master audio device name.
+     *
+     * @return a name of the device or null if the device is not available
+     */
+    public String getDeviceName() {
+        return getDeviceNameNative();
+    }
+
     private native int getVolumeNative();
 
     private native void setVolumeNative(int value);
+
+    private native boolean getMuteNative();
+
+    private native void setMuteNative(boolean value);
+
+    private native void toggleMuteNative();
+
+    private native void volumeUpNative();
+
+    private native void volumeDownNative();
+
+    private native String getDeviceNameNative();
 
     /**
      * Creates a VolumeControl instance with defaults except for the
