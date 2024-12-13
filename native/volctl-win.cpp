@@ -1,5 +1,9 @@
 #include "volctl.h"
 
+#include <atomic>
+#include <thread>
+#include <chrono>
+
 #include "cmath"
 #include "atlbase.h"
 #include "combaseapi.h"
@@ -9,6 +13,11 @@
 
 const IID CLSID_MMDeviceEnumerator = __uuidof(MMDeviceEnumerator);
 const IID IID_IAudioEndpointVolume = __uuidof(IAudioEndpointVolume);
+
+JavaVM *jvm;
+jobject globalRefObject;
+std::atomic<bool> volumeChangeThreadIsRunning(false);
+
 
 CComPtr<IMMDevice> getDefaultAudioDevice() {
     CComPtr<IMMDeviceEnumerator> enumerator;
@@ -40,6 +49,11 @@ CComPtr<IAudioEndpointVolume> getEndpointVolume() {
     );
 
     return volume;
+}
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    jvm = vm;
+    return JNI_VERSION_1_6;
 }
 
 JNIEXPORT jint JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_getVolumeNative
@@ -180,4 +194,112 @@ JNIEXPORT jstring JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_getDevice
     CoUninitialize();
 
     return result;
+}
+
+class VolumeCallback : public IAudioEndpointVolumeCallback {
+public:
+    VolumeCallback(JNIEnv *env) : refCount(1) {
+        jclass cls = env->GetObjectClass(globalRefObject);
+        jmidMuteChanged = env->GetMethodID(cls, "onMuteChanged", "(Z)V");
+        jmidVolumeChanged = env->GetMethodID(cls, "onVolumeChanged", "(I)V");
+    }
+
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void **ppvObject) {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(IAudioEndpointVolumeCallback)) {
+            *ppvObject = static_cast<IAudioEndpointVolumeCallback*>(this);
+            AddRef();
+            return S_OK;
+        }
+        return E_NOINTERFACE;
+    }
+
+    ULONG STDMETHODCALLTYPE AddRef() {
+        return InterlockedIncrement(&refCount);
+    }
+
+    ULONG STDMETHODCALLTYPE Release() {
+        ULONG ulRef = InterlockedDecrement(&refCount);
+        if (ulRef == 0) {
+            delete this;
+        }
+        return ulRef;
+    }
+
+    HRESULT STDMETHODCALLTYPE OnNotify(PAUDIO_VOLUME_NOTIFICATION_DATA pNotify) {
+        if (pNotify == NULL) {
+            return E_INVALIDARG;
+        }
+
+        if (!volumeChangeThreadIsRunning) {
+            return S_OK;
+        }
+
+        JNIEnv *env;
+        jvm->AttachCurrentThread((void **)&env, nullptr);
+
+        int mut = pNotify->bMuted ? 1 : 0;
+        if (muted != mut) {
+            muted = mut;
+            env->CallVoidMethod(globalRefObject, jmidMuteChanged, pNotify->bMuted);
+        }
+
+        if (!pNotify->bMuted) {
+            int vol = lround(pNotify->fMasterVolume * 100.0);
+            if (volume != vol) {
+                volume = vol;
+                env->CallVoidMethod(globalRefObject, jmidVolumeChanged, volume);
+            }
+        }
+
+        jvm->DetachCurrentThread();
+
+        return S_OK;
+    }
+
+private:
+    int muted = -1;
+    int volume = -1;
+    long refCount;
+    jmethodID jmidVolumeChanged;
+    jmethodID jmidMuteChanged;
+};
+
+void volumeChangeThreadFunction(VolumeCallback* callback) {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+    auto volume = getEndpointVolume();
+    if (volume != NULL) {
+        volume->RegisterControlChangeNotify(callback);
+
+        while (volumeChangeThreadIsRunning) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
+    }
+
+    volume = getEndpointVolume();
+    if (volume != NULL) {
+        volume->UnregisterControlChangeNotify(callback);
+    }
+
+    callback->Release();
+    callback = nullptr;
+    
+    CoUninitialize();
+}
+
+JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_subscribeToVolumeChangesNative
+        (JNIEnv *env, jobject obj) {
+    if (!volumeChangeThreadIsRunning) {
+        volumeChangeThreadIsRunning = true;
+        globalRefObject = env->NewGlobalRef(obj);
+        VolumeCallback* callback = new VolumeCallback(env);
+        std::thread volumeChangeThread(volumeChangeThreadFunction, callback);
+        volumeChangeThread.detach();
+    }
+}
+
+JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_unsubscribeFromVolumeChangesNative
+        (JNIEnv *env, jobject obj) {
+    volumeChangeThreadIsRunning = false;
+    env->DeleteGlobalRef(globalRefObject);
 }

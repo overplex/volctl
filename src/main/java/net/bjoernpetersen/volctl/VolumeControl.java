@@ -48,6 +48,8 @@ public class VolumeControl {
     private static final String LIB_NAME = "volctl";
     private static final String TMP_DIR_PROPERTY_NAME = "java.io.tmpdir";
 
+    private VolumeChangeListener mVolumeChangeListener = null;
+
     /**
      * Constructor.
      *
@@ -220,6 +222,38 @@ public class VolumeControl {
         return getDeviceNameNative();
     }
 
+    /**
+     * Sets a listener to be notified of changes to the master audio volume level.
+     * The listener will be called whenever the volume level changes.
+     * This method starts a new thread to subscribe to volume changes natively.
+     *
+     * @param listener the VolumeChangeListener to be notified of volume changes
+     */
+    public void setVolumeChangeListener(VolumeChangeListener listener) {
+        mVolumeChangeListener = listener;
+        subscribeToVolumeChangesNative();
+    }
+
+    /**
+     * Removes the current volume change listener.
+     */
+    public void removeVolumeChangeListener() {
+        unsubscribeFromVolumeChangesNative();
+        mVolumeChangeListener = null;
+    }
+
+    public void onVolumeChanged(int volume) {
+        if (mVolumeChangeListener != null) {
+            mVolumeChangeListener.onVolumeChanged(volume);
+        }
+    }
+
+    public void onMuteChanged(boolean isMuted) {
+        if (mVolumeChangeListener != null) {
+            mVolumeChangeListener.onMuteChanged(isMuted);
+        }
+    }
+
     private native int getVolumeNative();
 
     private native void setVolumeNative(int value);
@@ -235,6 +269,10 @@ public class VolumeControl {
     private native void volumeDownNative(boolean showSystemPanel);
 
     private native String getDeviceNameNative();
+
+    public native void subscribeToVolumeChangesNative();
+
+    public native void unsubscribeFromVolumeChangesNative();
 
     /**
      * Creates a VolumeControl instance with defaults except for the
