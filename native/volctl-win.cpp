@@ -10,7 +10,7 @@
 const IID CLSID_MMDeviceEnumerator = __uuidof(MMDeviceEnumerator);
 const IID IID_IAudioEndpointVolume = __uuidof(IAudioEndpointVolume);
 
-CComPtr<IMMDevice> getImmDevice() {
+CComPtr<IMMDevice> getDefaultAudioDevice() {
     CComPtr<IMMDeviceEnumerator> enumerator;
     enumerator.CoCreateInstance(
             CLSID_MMDeviceEnumerator, nullptr,
@@ -26,7 +26,7 @@ CComPtr<IMMDevice> getImmDevice() {
 }
 
 CComPtr<IAudioEndpointVolume> getEndpointVolume() {
-    auto device = getImmDevice();
+    auto device = getDefaultAudioDevice();
     if (device == NULL) {
         return NULL;
     }
@@ -100,25 +100,62 @@ JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_setMuteNativ
 }
 
 JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_toggleMuteNative
-        (JNIEnv *, jobject) {
-    SendMessage(GetForegroundWindow(), WM_APPCOMMAND, 0, APPCOMMAND_VOLUME_MUTE * 0x10000);
+        (JNIEnv *, jobject, jboolean showSystemPanel) {
+    if (showSystemPanel) {
+        SendMessage(GetForegroundWindow(), WM_APPCOMMAND, 0, APPCOMMAND_VOLUME_MUTE * 0x10000);
+    } else {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+        auto volume = getEndpointVolume();
+        if (volume != NULL) {
+            BOOL isMuted;
+            HRESULT hr = volume->GetMute(&isMuted);
+            if (SUCCEEDED(hr)) {
+                volume->SetMute(!isMuted, nullptr);
+            }
+        }
+
+        CoUninitialize();
+    }
 }
 
 JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_volumeUpNative
-        (JNIEnv *, jobject) {
-    SendMessage(GetForegroundWindow(), WM_APPCOMMAND, 0, APPCOMMAND_VOLUME_UP * 0x10000);
+        (JNIEnv *, jobject, jboolean showSystemPanel) {
+    if (showSystemPanel) {
+        SendMessage(GetForegroundWindow(), WM_APPCOMMAND, 0, APPCOMMAND_VOLUME_UP * 0x10000);
+    } else {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+        auto volume = getEndpointVolume();
+        if (volume != NULL) {
+            volume->VolumeStepUp(nullptr);
+        }
+
+        CoUninitialize();
+    }
 }
 
 JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_volumeDownNative
-        (JNIEnv *, jobject) {
-    SendMessage(GetForegroundWindow(), WM_APPCOMMAND, 0, APPCOMMAND_VOLUME_DOWN * 0x10000);
+        (JNIEnv *, jobject, jboolean showSystemPanel) {
+    if (showSystemPanel) {
+        SendMessage(GetForegroundWindow(), WM_APPCOMMAND, 0, APPCOMMAND_VOLUME_DOWN * 0x10000);
+    } else {
+        CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+
+        auto volume = getEndpointVolume();
+        if (volume != NULL) {
+            volume->VolumeStepDown(nullptr);
+        }
+
+        CoUninitialize();
+    }
 }
 
 JNIEXPORT jstring JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_getDeviceNameNative
         (JNIEnv *env, jobject) {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
-    auto device = getImmDevice();
+    auto device = getDefaultAudioDevice();
     if (device == NULL) {
         CoUninitialize();
         return NULL;

@@ -189,8 +189,8 @@ public class VolumeControl {
      * If the audio is currently muted, it will be unmuted.
      * If the audio is currently unmuted, it will be muted.
      */
-    public void toggleMute() {
-        toggleMuteNative();
+    public void toggleMute(boolean showSystemPanel) {
+        toggleMuteNative(showSystemPanel);
     }
 
     /**
@@ -198,8 +198,8 @@ public class VolumeControl {
      * The volume level will be increased by a predefined increment,
      * ensuring it does not exceed the maximum value of 100.
      */
-    public void volumeUp() {
-        volumeUpNative();
+    public void volumeUp(boolean showSystemPanel) {
+        volumeUpNative(showSystemPanel);
     }
 
     /**
@@ -207,8 +207,8 @@ public class VolumeControl {
      * The volume level will be decreased by a predefined decrement,
      * ensuring it does not fall below the minimum value of 0.
      */
-    public void volumeDown() {
-        volumeDownNative();
+    public void volumeDown(boolean showSystemPanel) {
+        volumeDownNative(showSystemPanel);
     }
 
     /**
@@ -228,11 +228,11 @@ public class VolumeControl {
 
     private native void setMuteNative(boolean value);
 
-    private native void toggleMuteNative();
+    private native void toggleMuteNative(boolean showSystemPanel);
 
-    private native void volumeUpNative();
+    private native void volumeUpNative(boolean showSystemPanel);
 
-    private native void volumeDownNative();
+    private native void volumeDownNative(boolean showSystemPanel);
 
     private native String getDeviceNameNative();
 
