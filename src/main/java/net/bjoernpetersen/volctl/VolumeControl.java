@@ -49,6 +49,7 @@ public class VolumeControl {
     private static final String TMP_DIR_PROPERTY_NAME = "java.io.tmpdir";
 
     private VolumeChangeListener mVolumeChangeListener = null;
+    private VolumeDeviceListener mVolumeDeviceListener = null;
 
     /**
      * Constructor.
@@ -214,12 +215,12 @@ public class VolumeControl {
     }
 
     /**
-     * Gets the current master audio device name.
+     * Gets the name of the default audio output device.
      *
-     * @return a name of the device or null if the device is not available
+     * @return the name of the default audio output device
      */
-    public String getDeviceName() {
-        return getDeviceNameNative();
+    public String getDefaultDeviceName() {
+        return getDefaultDeviceNameNative();
     }
 
     /**
@@ -242,6 +243,24 @@ public class VolumeControl {
         mVolumeChangeListener = null;
     }
 
+    /**
+     * Sets a listener to be notified of changes to the audio output devices.
+     *
+     * @param listener the VolumeDeviceListener to be notified of device changes
+     */
+    public void setVolumeDeviceListener(VolumeDeviceListener listener) {
+        mVolumeDeviceListener = listener;
+        subscribeToVolumeDeviceChangesNative();
+    }
+
+    /**
+     * Removes the current volume device listener and unsubscribes from device changes.
+     */
+    public void removeVolumeDeviceListener() {
+        unsubscribeFromVolumeDeviceChangesNative();
+        mVolumeDeviceListener = null;
+    }
+
     public void onVolumeChanged(int volume) {
         if (mVolumeChangeListener != null) {
             mVolumeChangeListener.onVolumeChanged(volume);
@@ -251,6 +270,72 @@ public class VolumeControl {
     public void onMuteChanged(boolean isMuted) {
         if (mVolumeChangeListener != null) {
             mVolumeChangeListener.onMuteChanged(isMuted);
+        }
+    }
+
+    public void onVolumeSubscribed() {
+        if (mVolumeChangeListener != null) {
+            mVolumeChangeListener.onSubscribed();
+        }
+    }
+
+    public void onVolumeUnsubscribed() {
+        if (mVolumeChangeListener != null) {
+            mVolumeChangeListener.onUnsubscribed();
+        }
+    }
+
+    public void onDefaultDeviceChanged(String name) {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onDefaultDeviceChanged(name);
+        }
+    }
+
+    public void onDeviceAdded(String name) {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onDeviceAdded(name);
+        }
+    }
+
+    public void onDeviceRemoved(String name) {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onDeviceRemoved(name);
+        }
+    }
+
+    public void onDeviceActive(String name) {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onDeviceActive(name);
+        }
+    }
+
+    public void onDeviceDisabled(String name) {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onDeviceDisabled(name);
+        }
+    }
+
+    public void onDeviceNotPresent(String name) {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onDeviceNotPresent(name);
+        }
+    }
+
+    public void onDeviceUnplugged(String name) {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onDeviceUnplugged(name);
+        }
+    }
+
+    public void onVolumeDeviceSubscribed() {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onSubscribed();
+        }
+    }
+
+    public void onVolumeDeviceUnsubscribed() {
+        if (mVolumeDeviceListener != null) {
+            mVolumeDeviceListener.onUnsubscribed();
         }
     }
 
@@ -268,11 +353,15 @@ public class VolumeControl {
 
     private native void volumeDownNative(boolean showSystemPanel);
 
-    private native String getDeviceNameNative();
+    private native String getDefaultDeviceNameNative();
 
     public native void subscribeToVolumeChangesNative();
 
     public native void unsubscribeFromVolumeChangesNative();
+
+    public native void subscribeToVolumeDeviceChangesNative();
+
+    public native void unsubscribeFromVolumeDeviceChangesNative();
 
     /**
      * Creates a VolumeControl instance with defaults except for the

@@ -20,4 +20,14 @@ public interface VolumeChangeListener extends EventListener {
      * @param isMuted true if the sound is muted, false if the sound is unmuted.
      */
     void onMuteChanged(boolean isMuted);
+
+    /**
+     * Called when the listener has successfully subscribed to volume changes.
+     */
+    void onSubscribed();
+
+    /**
+     * Called when the listener has successfully unsubscribed from volume changes.
+     */
+    void onUnsubscribed();
 }
