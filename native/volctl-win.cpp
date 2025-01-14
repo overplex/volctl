@@ -21,6 +21,9 @@ jobject globalRefVolDevObj = NULL;
 std::atomic<bool> volumeChangeThreadIsRunning(false);
 std::atomic<bool> volumeDeviceThreadIsRunning(false);
 
+// Mutex causes ACCESS_VIOLATION in msvcp140.dll
+std::atomic<bool> volumeChangeLock(false);
+std::atomic<bool> volumeDeviceLock(false);
 
 CComPtr<IMMDeviceEnumerator> getDeviceEnumerator() {
     CComPtr<IMMDeviceEnumerator> enumerator;
@@ -63,6 +66,23 @@ CComPtr<IAudioEndpointVolume> getEndpointVolume() {
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     jvm = vm;
     return JNI_VERSION_1_6;
+}
+
+JNIEXPORT void JNICALL JNI_OnUnload(JavaVM *vm, void *reserved) {
+	JNIEnv *env;
+	jvm->AttachCurrentThread((void **)&env, nullptr);
+
+    if (globalRefVolObj != NULL) {
+        env->DeleteGlobalRef(globalRefVolObj);
+        globalRefVolObj = NULL;
+    }
+
+    if (globalRefVolDevObj != NULL) {
+        env->DeleteGlobalRef(globalRefVolDevObj);
+        globalRefVolDevObj = NULL;
+    }
+
+	jvm->DetachCurrentThread();
 }
 
 JNIEXPORT jint JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_getVolumeNative
@@ -174,13 +194,9 @@ JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_volumeDownNa
     }
 }
 
-JNIEXPORT jstring JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_getDefaultDeviceNameNative
-        (JNIEnv *env, jobject) {
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-
+jstring getDefaultAudioDeviceName(JNIEnv *env) {
     auto device = getDefaultAudioDevice();
     if (device == NULL) {
-        CoUninitialize();
         return NULL;
     }
 
@@ -202,6 +218,13 @@ JNIEXPORT jstring JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_getDefaul
         static_cast<jsize>(wcslen(friendlyName.pwszVal)));
     PropVariantClear(&friendlyName);
 
+    return result;
+}
+
+JNIEXPORT jstring JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_getDefaultDeviceNameNative
+        (JNIEnv *env, jobject) {
+    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    jstring result = getDefaultAudioDeviceName(env);
     CoUninitialize();
 
     return result;
@@ -243,7 +266,7 @@ public:
             return E_INVALIDARG;
         }
 
-        if (!volumeChangeThreadIsRunning) {
+        if (!volumeChangeThreadIsRunning.load()) {
             return S_OK;
         }
 
@@ -294,6 +317,10 @@ private:
 };
 
 void volumeChangeThreadFunction(VolumeCallback* callback) {
+    while (volumeChangeLock.load()) {
+        std::this_thread::yield();
+    }
+	volumeChangeLock.store(true);
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
     auto volume = getEndpointVolume();
@@ -303,7 +330,7 @@ void volumeChangeThreadFunction(VolumeCallback* callback) {
         if (SUCCEEDED(hr)) {
             callback->onSubscribed();
 
-            while (volumeChangeThreadIsRunning) {
+            while (volumeChangeThreadIsRunning.load()) {
                 std::this_thread::sleep_for(std::chrono::seconds(1));
             }
 
@@ -314,7 +341,7 @@ void volumeChangeThreadFunction(VolumeCallback* callback) {
         }
     }
 
-    volumeChangeThreadIsRunning = false;
+    volumeChangeThreadIsRunning.store(true);
 
     if (callback != NULL) {
         callback->onUnsubscribed();
@@ -323,27 +350,27 @@ void volumeChangeThreadFunction(VolumeCallback* callback) {
     }
 
     CoUninitialize();
+	volumeChangeLock.store(false);
 }
 
 JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_subscribeToVolumeChangesNative
         (JNIEnv *env, jobject obj) {
-    if (!volumeChangeThreadIsRunning) {
-        volumeChangeThreadIsRunning = true;
-        globalRefVolObj = env->NewGlobalRef(obj);
-        VolumeCallback* callback = new VolumeCallback(env);
-        std::thread volumeChangeThread(volumeChangeThreadFunction, callback);
-        volumeChangeThread.detach();
+    volumeChangeThreadIsRunning.store(false);
+    while (volumeChangeLock.load()) {
+        std::this_thread::yield();
     }
+	volumeChangeLock.store(true);
+    volumeChangeThreadIsRunning.store(true);
+    globalRefVolObj = env->NewGlobalRef(obj);
+    VolumeCallback* callback = new VolumeCallback(env);
+    std::thread volumeChangeThread(volumeChangeThreadFunction, callback);
+    volumeChangeThread.detach();
+	volumeChangeLock.store(false);
 }
 
 JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_unsubscribeFromVolumeChangesNative
         (JNIEnv *env, jobject obj) {
-    volumeChangeThreadIsRunning = false;
-
-    if (globalRefVolObj != NULL) {
-        env->DeleteGlobalRef(globalRefVolObj);
-        globalRefVolObj = NULL;
-    }
+    volumeChangeThreadIsRunning.store(false);
 }
 
 class VolumeDeviceCallback : public IMMNotificationClient {
@@ -430,7 +457,7 @@ public:
     }
 
     HRESULT callJavaMethod(jmethodID jmid, LPCWSTR pwstrDeviceId) {
-        if (volumeDeviceThreadIsRunning) {
+        if (volumeDeviceThreadIsRunning.load()) {
             JNIEnv *env;
             jvm->AttachCurrentThread((void **)&env, nullptr);
 
@@ -444,17 +471,28 @@ public:
     }
 
     HRESULT STDMETHODCALLTYPE OnDefaultDeviceChanged(EDataFlow flow, ERole role, LPCWSTR pwstrDeviceId) {
-        if (volumeDeviceThreadIsRunning && (firstDevice || !devcmp(pwstrDeviceId, lastDeviceId))) {
-            lastDeviceId = pwstrDeviceId;
+        if (flow == eRender && volumeDeviceThreadIsRunning.load() &&
+            (firstDevice || !devcmp(pwstrDeviceId, lastDeviceId))) {
+
             firstDevice = false;
 
-            JNIEnv *env;
-            jvm->AttachCurrentThread((void **)&env, nullptr);
-
-            jstring deviceName = NULL;
+            if (lastDeviceId != NULL) {
+                delete[] lastDeviceId;
+                lastDeviceId = NULL;
+            }
 
             if (pwstrDeviceId != NULL) {
-                deviceName = getDeviceName(env, pwstrDeviceId);
+                size_t deviceIdLength = wcslen(pwstrDeviceId) + 1;
+                lastDeviceId = new wchar_t[deviceIdLength];
+                wcscpy_s(lastDeviceId, deviceIdLength, pwstrDeviceId);
+            }
+
+            JNIEnv *env;
+            jstring deviceName = NULL;
+            jvm->AttachCurrentThread((void **)&env, nullptr);
+
+            if (pwstrDeviceId != NULL) {
+                deviceName = getDefaultAudioDeviceName(env);
             }
 
             env->CallVoidMethod(globalRefVolDevObj, jmidDefaultDeviceChanged, deviceName);
@@ -513,7 +551,7 @@ public:
 private:
     long refCount;
     bool firstDevice;
-    LPCWSTR lastDeviceId;
+    wchar_t* lastDeviceId;
     jmethodID jmidSubscribed;
     jmethodID jmidDeviceAdded;
     jmethodID jmidUnsubscribed;
@@ -527,6 +565,10 @@ private:
 };
 
 void volumeDeviceThreadFunction(VolumeDeviceCallback* callback) {
+    while (volumeDeviceLock.load()) {
+        std::this_thread::yield();
+    }
+	volumeDeviceLock.store(true);
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
     auto enumerator = getDeviceEnumerator();
@@ -535,7 +577,7 @@ void volumeDeviceThreadFunction(VolumeDeviceCallback* callback) {
     if (SUCCEEDED(hr)) {
         callback->onSubscribed();
 
-        while (volumeDeviceThreadIsRunning) {
+        while (volumeDeviceThreadIsRunning.load()) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
@@ -545,7 +587,7 @@ void volumeDeviceThreadFunction(VolumeDeviceCallback* callback) {
         }
     }
 
-    volumeDeviceThreadIsRunning = false;
+    volumeDeviceThreadIsRunning.store(false);
 
     if (callback != NULL) {
         callback->onUnsubscribed();
@@ -554,25 +596,25 @@ void volumeDeviceThreadFunction(VolumeDeviceCallback* callback) {
     }
 
     CoUninitialize();
+	volumeDeviceLock.store(false);
 }
 
 JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_subscribeToVolumeDeviceChangesNative
         (JNIEnv *env, jobject obj) {
-    if (!volumeDeviceThreadIsRunning) {
-        volumeDeviceThreadIsRunning = true;
-        globalRefVolDevObj = env->NewGlobalRef(obj);
-        VolumeDeviceCallback* callback = new VolumeDeviceCallback(env);
-        std::thread volumeDeviceThread(volumeDeviceThreadFunction, callback);
-        volumeDeviceThread.detach();
+    volumeDeviceThreadIsRunning.store(false);
+    while (volumeDeviceLock.load()) {
+        std::this_thread::yield();
     }
+	volumeDeviceLock.store(true);
+    volumeDeviceThreadIsRunning.store(true);
+    globalRefVolDevObj = env->NewGlobalRef(obj);
+    VolumeDeviceCallback* callback = new VolumeDeviceCallback(env);
+    std::thread volumeDeviceThread(volumeDeviceThreadFunction, callback);
+    volumeDeviceThread.detach();
+	volumeDeviceLock.store(false);
 }
 
 JNIEXPORT void JNICALL Java_net_bjoernpetersen_volctl_VolumeControl_unsubscribeFromVolumeDeviceChangesNative
         (JNIEnv *env, jobject obj) {
-    volumeDeviceThreadIsRunning = false;
-
-    if (globalRefVolDevObj != NULL) {
-        env->DeleteGlobalRef(globalRefVolDevObj);
-        globalRefVolDevObj = NULL;
-    }
+    volumeDeviceThreadIsRunning.store(false);
 }
